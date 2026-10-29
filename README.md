@@ -11,6 +11,7 @@ Open `builds/Bajrang-Patrol-Windows/Play-Bajrang.cmd` after packaging, or run `p
 | WASD / mouse | Move / look in first person |
 | Shift | Quick-step; altitude, terrain, and stamina still affect pace |
 | Right mouse | Aim with a closer view |
+| Left click / B / G | In first person, fire / cycle single, burst ×3 and full auto / reload |
 | C / V | Crouch or rise / go prone and crawl |
 | T | Switch between first person and tactical overhead view |
 | Esc | Release the mouse; in overhead view, return to first person |

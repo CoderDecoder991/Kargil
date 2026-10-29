@@ -9,11 +9,12 @@ const ROSTER := ["Lt. Saurabh Kalia", "Sepoy Arjun Ram", "Sepoy Bhanwar Lal Bhag
 const OBSERVATION := Vector3(0,0,-32)
 const ROPE_NEAR := Vector3(12,0,-13)
 const ROPE_FAR := Vector3(8,0,-25)
-enum FireMode { SINGLE, BURST }
+enum FireMode { SINGLE, BURST, AUTO }
 const MAGAZINE_CAPACITY := 30
 const RESERVE_CAPACITY := 120
 const BURST_SHOT_COUNT := 3
-const SHOT_INTERVAL := 0.10
+# About 660 rounds/min, the cadence of the recorded AK-47 full-auto loop.
+const SHOT_INTERVAL := 0.091
 const RELOAD_DURATION := 1.45
 const SHOT_DAMAGE := 40.0
 
@@ -102,6 +103,14 @@ var fire_player: AudioStreamPlayer
 var weapon_fire_player: AudioStreamPlayer
 var weapon_fire_players: Array[AudioStreamPlayer] = []
 var weapon_fire_player_cursor := 0
+var weapon_sounds := {}
+var weapon_sound_last := {}
+var fps_auto_firing := false
+var fps_burst_recorded := false
+var fps_burst_voice: AudioStreamPlayer
+var weapon_auto_loop_player: AudioStreamPlayer
+var weapon_auto_loop_fade: Tween
+var fps_last_report_kind := ""
 var contact_cue := 0
 var detection_message_shown := false
 var rope_started := false
@@ -1468,27 +1477,63 @@ func _fire_trigger_pressed() -> void:
 	if fps_fire_mode == FireMode.SINGLE:
 		if fps_fire_cooldown <= 0.0: _fire_one_round()
 		return
+	if fps_fire_mode == FireMode.AUTO:
+		if fps_fire_cooldown > 0.0: return
+		fps_auto_firing = true
+		_start_auto_loop()
+		if not _fire_one_round(): _stop_auto_fire()
+		return
 	if fps_burst_rounds_remaining > 0 or fps_fire_cooldown > 0.0: return
 	fps_burst_rounds_remaining = BURST_SHOT_COUNT
 	fps_burst_timer = 0.0
+	# A full burst plays one recorded three-round string; a partial one falls back to per-round clips.
+	fps_burst_recorded = fps_magazine_rounds >= BURST_SHOT_COUNT
+	if fps_burst_recorded: fps_burst_voice = _play_weapon_sound("burst")
 	_update_burst_fire(0.0)
 
 func _fire_trigger_released() -> void:
 	fps_trigger_down = false
+	_stop_auto_fire()
+
+# Full auto plays a seamless loop cut from a real burst while the trigger is held,
+# then fades it out under the recorded echo tail.
+func _start_auto_loop() -> void:
+	if weapon_auto_loop_player == null: return
+	if weapon_auto_loop_fade != null: weapon_auto_loop_fade.kill()
+	var loops: Array = weapon_sounds.get("loop",[])
+	if loops.is_empty(): return
+	fps_last_report_kind = "loop"
+	weapon_auto_loop_player.stream = loops[randi()%loops.size()]
+	weapon_auto_loop_player.volume_db = -4
+	weapon_auto_loop_player.play()
+
+func _stop_auto_fire() -> void:
+	if not fps_auto_firing: return
+	fps_auto_firing = false
+	if weapon_auto_loop_player != null and weapon_auto_loop_player.playing:
+		weapon_auto_loop_fade = create_tween()
+		weapon_auto_loop_fade.tween_property(weapon_auto_loop_player,"volume_db",-60.0,0.03)
+		weapon_auto_loop_fade.tween_callback(weapon_auto_loop_player.stop)
+	_play_weapon_sound("tail")
 
 func _toggle_fire_mode() -> void:
 	if not first_person_mode or phase <= 0 or phase >= 5: return
 	_cancel_burst()
-	fps_fire_mode = FireMode.BURST if fps_fire_mode == FireMode.SINGLE else FireMode.SINGLE
-	_message("Fire mode · %s" % ("BURST ×3" if fps_fire_mode == FireMode.BURST else "SINGLE"))
+	fps_fire_mode = (fps_fire_mode+1)%FireMode.size()
+	_message("Fire mode · %s" % _fire_mode_text())
 	_refresh_ui()
 
+func _fire_mode_text() -> String:
+	return ["SINGLE","BURST ×3","AUTO"][fps_fire_mode]
+
 func _cancel_burst() -> void:
+	if fps_burst_rounds_remaining > 0 and fps_burst_recorded and is_instance_valid(fps_burst_voice): fps_burst_voice.stop()
 	fps_burst_rounds_remaining = 0
 	fps_burst_timer = 0.0
+	_stop_auto_fire()
 
 func _update_fire_system(delta: float) -> void:
-	fps_fire_cooldown = maxf(0.0,fps_fire_cooldown-delta)
+	fps_fire_cooldown = fps_fire_cooldown-delta if fps_auto_firing else maxf(0.0,fps_fire_cooldown-delta)
 	fps_muzzle_flash_clock = maxf(0.0,fps_muzzle_flash_clock-delta)
 	if fps_muzzle_flash != null: fps_muzzle_flash.visible = fps_muzzle_flash_clock > 0.0
 	if fps_muzzle_light != null:
@@ -1509,6 +1554,10 @@ func _update_fire_system(delta: float) -> void:
 		if fps_reload_remaining <= 0.0: _finish_weapon_reload()
 	if fps_burst_rounds_remaining > 0 and fps_reload_remaining <= 0.0:
 		_update_burst_fire(delta)
+	var auto_rounds := 0
+	while fps_auto_firing and fps_trigger_down and fps_fire_cooldown <= 0.0 and auto_rounds < 3:
+		auto_rounds += 1
+		if not _fire_one_round(): _stop_auto_fire()
 
 func _update_burst_fire(delta: float) -> void:
 	if fps_burst_rounds_remaining <= 0: return
@@ -1526,22 +1575,21 @@ func _update_burst_fire(delta: float) -> void:
 
 func _fire_one_round() -> bool:
 	if fps_magazine_rounds <= 0 or fps_reload_remaining > 0.0: return false
+	var report := "single"
+	if fps_fire_mode == FireMode.AUTO or (fps_fire_mode == FireMode.BURST and fps_burst_recorded):
+		report = ""
+	elif fps_fire_mode == FireMode.BURST:
+		report = "last" if fps_burst_rounds_remaining <= 1 or fps_magazine_rounds == 1 else "auto"
+	if report != "": _play_weapon_sound(report)
 	fps_magazine_rounds -= 1
-	fps_fire_cooldown = SHOT_INTERVAL
+	# Full auto carries timer overshoot forward so the round rate stays locked to the loop.
+	fps_fire_cooldown = SHOT_INTERVAL+(clampf(fps_fire_cooldown,-SHOT_INTERVAL,0.0) if fps_auto_firing else 0.0)
 	fps_shot_count += 1
 	fps_weapon_recoil_pitch = minf(0.18,fps_weapon_recoil_pitch+0.042)
 	fps_weapon_recoil_roll = clampf(fps_weapon_recoil_roll+randf_range(-0.006,0.006),-0.025,0.025)
 	fps_weapon_recoil_back = minf(0.045,fps_weapon_recoil_back+0.012)
 	fps_camera_recoil_pitch = minf(0.075,fps_camera_recoil_pitch+0.012)
 	fps_muzzle_flash_clock = 0.055
-	if not weapon_fire_players.is_empty():
-		var report := weapon_fire_players[weapon_fire_player_cursor]
-		report.pitch_scale = randf_range(0.98,1.02)
-		report.play()
-		weapon_fire_player_cursor = (weapon_fire_player_cursor+1)%weapon_fire_players.size()
-	elif weapon_fire_player != null:
-		weapon_fire_player.pitch_scale = randf_range(0.98,1.02)
-		weapon_fire_player.play()
 	_spawn_spent_casing()
 	_resolve_hitscan()
 	return true
@@ -1734,7 +1782,7 @@ func _refresh_ui() -> void:
 	var view_hint := "FPS · T overhead · Esc cursor" if first_person_mode else "TACTICAL · T first person"
 	hint_label.text = "%s  ·  Visibility %d%%  ·  %s  ·  %d FPS" % [view_hint,int(visibility*100),"PAUSED / %d queued" % queued_orders.size() if tactical_paused else ["Performance","Balanced","High"][preset],Engine.get_frames_per_second()]
 	if weapon_status_label != null:
-		var mode_text := "BURST ×3" if fps_fire_mode == FireMode.BURST else "SINGLE"
+		var mode_text := _fire_mode_text()
 		var ammo_text := "RELOADING" if fps_reload_remaining > 0.0 else "%02d / %03d" % [fps_magazine_rounds,fps_reserve_rounds]
 		weapon_status_label.text = "AK  ·  %s  ·  %s  ·  B MODE" % [mode_text,ammo_text]
 		weapon_status_label.get_parent().visible = first_person_mode and phase > 0 and phase < 5
@@ -2139,7 +2187,7 @@ func _load_game() -> void:
 	if weapon_state.size() >= 3:
 		fps_magazine_rounds = clampi(int(weapon_state[0]),0,MAGAZINE_CAPACITY)
 		fps_reserve_rounds = clampi(int(weapon_state[1]),0,RESERVE_CAPACITY)
-		fps_fire_mode = int(weapon_state[2]) if int(weapon_state[2]) == FireMode.BURST else FireMode.SINGLE
+		fps_fire_mode = clampi(int(weapon_state[2]),FireMode.SINGLE,FireMode.AUTO)
 	phase = int(parsed.get("phase",1))
 	phase_timer = float(parsed.get("phase_timer",0))
 	rope_started = bool(parsed.get("rope_started",false))
@@ -2222,42 +2270,42 @@ func _load_wind() -> void:
 	fire_player.stream = load("res://assets/audio/distant_fire.wav")
 	fire_player.volume_db = -15
 	add_child(fire_player)
-	weapon_fire_player = AudioStreamPlayer.new()
-	var report_stream := _build_single_rifle_report()
+	# Real AK-47 recordings (CC0 Free Firearm Sound Library); clips cut by tools/extract_ak_sounds.py.
+	weapon_sounds.clear()
+	var clip_sets := {"single":["ak_single_",3],"auto":["ak_auto_",17],"last":["ak_last_round_",2],"tail":["ak_auto_tail_",2],"loop":["ak_auto_loop_",2],"burst":["ak_burst_",2]}
+	for kind in clip_sets:
+		var clips: Array[AudioStream] = []
+		for n in range(1,int(clip_sets[kind][1])+1): clips.append(load("res://assets/audio/weapons/%s%d.wav" % [clip_sets[kind][0],n]))
+		weapon_sounds[kind] = clips
+	for clip: AudioStreamWAV in weapon_sounds["loop"]:
+		clip.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		clip.loop_begin = 0
+		clip.loop_end = clip.data.size()/4
+	weapon_auto_loop_player = AudioStreamPlayer.new()
+	weapon_auto_loop_player.name = "AK full-auto loop"
+	add_child(weapon_auto_loop_player)
 	weapon_fire_players.clear()
-	for i in range(3):
+	for i in range(8):
 		var report_player := AudioStreamPlayer.new()
-		report_player.name = "AK report placeholder voice %d" % (i+1)
-		report_player.stream = report_stream
-		report_player.volume_db = -2
+		report_player.name = "AK report voice %d" % (i+1)
+		report_player.volume_db = -4
 		add_child(report_player)
 		weapon_fire_players.append(report_player)
 	weapon_fire_player = weapon_fire_players[0]
 
-# One-pulse placeholder report synthesized as 16-bit PCM. distant_fire.wav is a
-# two-pulse volley imported as QOA, so byte-trimming it does not yield one shot.
-func _build_single_rifle_report() -> AudioStreamWAV:
-	const RATE := 22050
-	var rng := RandomNumberGenerator.new()
-	rng.seed = 47
-	var frames := int(RATE*0.24)
-	var data := PackedByteArray()
-	data.resize(frames*2)
-	var noise := 0.0
-	for i in frames:
-		var t := float(i)/RATE
-		noise = 0.55*noise+0.45*rng.randf_range(-1.0,1.0)
-		var crack := noise*exp(-t*38.0)
-		var thump := sin(t*95.0*TAU)*exp(-t*22.0)*0.55
-		var attack := minf(1.0,t*RATE/24.0)
-		data.encode_s16(i*2,int(clampf((crack+thump)*attack*0.9,-1.0,1.0)*32767.0))
-	var report := AudioStreamWAV.new()
-	report.format = AudioStreamWAV.FORMAT_16_BITS
-	report.mix_rate = RATE
-	report.stereo = false
-	report.loop_mode = AudioStreamWAV.LOOP_DISABLED
-	report.data = data
-	return report
+func _play_weapon_sound(kind: String) -> AudioStreamPlayer:
+	fps_last_report_kind = kind
+	var clips: Array = weapon_sounds.get(kind,[])
+	if clips.is_empty() or weapon_fire_players.is_empty(): return null
+	var pick := randi()%clips.size()
+	if clips.size() > 1 and pick == int(weapon_sound_last.get(kind,-1)): pick = (pick+1)%clips.size()
+	weapon_sound_last[kind] = pick
+	var voice := weapon_fire_players[weapon_fire_player_cursor]
+	weapon_fire_player_cursor = (weapon_fire_player_cursor+1)%weapon_fire_players.size()
+	voice.stream = clips[pick]
+	voice.pitch_scale = randf_range(0.985,1.015)
+	voice.play()
+	return voice
 
 func _process(delta: float) -> void:
 	if benchmark != "":

@@ -56,6 +56,64 @@ func _run() -> void:
 	if not burst_pass or not held_burst_no_repeat: failures += 1
 	print("FIRE_BURST_%s first=%s release_did_not_cancel=true shots=%d ammo=%d held_no_repeat=%s" % ["PASS" if burst_pass and held_burst_no_repeat else "FAIL",burst_first,main.fps_shot_count,main.fps_magazine_rounds,held_burst_no_repeat])
 
+	main.fps_fire_mode = 0
+	main.fps_fire_cooldown = 0.0
+	main._fire_trigger_pressed()
+	var single_report: bool = main.fps_last_report_kind == "single"
+	main._fire_trigger_released()
+	main.fps_fire_mode = 1
+	main.fps_fire_cooldown = 0.0
+	var burst_reports: Array[String] = []
+	main._fire_trigger_pressed()
+	burst_reports.append(main.fps_last_report_kind)
+	main._fire_trigger_released()
+	for frame in range(5):
+		var before: int = main.fps_shot_count
+		main._update_fire_system(0.10)
+		if main.fps_shot_count > before: burst_reports.append(main.fps_last_report_kind)
+	var report_pass: bool = single_report and burst_reports == ["burst","burst","burst"] and main.weapon_sounds.get("single",[]).size() == 3 and main.weapon_sounds.get("burst",[]).size() == 2 and main.weapon_sounds.get("loop",[]).size() == 2
+	if not report_pass: failures += 1
+	print("FIRE_REPORT_SOUNDS_%s single=%s burst=%s" % ["PASS" if report_pass else "FAIL",single_report,",".join(burst_reports)])
+
+	main.fps_fire_mode = 2
+	main.fps_magazine_rounds = 30
+	main.fps_shot_count = 0
+	main.fps_fire_cooldown = 0.0
+	main._fire_trigger_pressed()
+	for frame in range(10): main._update_fire_system(0.092)
+	var auto_held_shots: int = main.fps_shot_count
+	var auto_looping: bool = main.fps_last_report_kind == "loop" and main.weapon_auto_loop_player.stream.loop_mode == AudioStreamWAV.LOOP_FORWARD
+	main._fire_trigger_released()
+	var auto_tail: bool = main.fps_last_report_kind == "tail" and not main.fps_auto_firing
+	main._update_fire_system(0.5)
+	var auto_stopped: bool = main.fps_shot_count == auto_held_shots
+	main.fps_magazine_rounds = 3
+	main.fps_shot_count = 0
+	main.fps_fire_cooldown = 0.0
+	main._fire_trigger_pressed()
+	for frame in range(10): main._update_fire_system(0.092)
+	var auto_empty: bool = main.fps_shot_count == 3 and main.fps_magazine_rounds == 0 and main.fps_last_report_kind == "tail" and not main.fps_auto_firing
+	main._fire_trigger_released()
+	var auto_pass: bool = auto_held_shots >= 10 and auto_looping and auto_tail and auto_stopped and auto_empty
+	if not auto_pass: failures += 1
+	print("FIRE_AUTO_%s held_shots=%d loop=%s tail=%s stopped=%s empty_tail=%s" % ["PASS" if auto_pass else "FAIL",auto_held_shots,auto_looping,auto_tail,auto_stopped,auto_empty])
+	# Uneven low frame times must still give the loop's round rate, not one quantized to frames.
+	main.fps_magazine_rounds = 30
+	main.fps_shot_count = 0
+	main.fps_fire_cooldown = 0.0
+	main._fire_trigger_pressed()
+	var held_time := 0.0
+	for frame in range(48):
+		var frame_delta := 0.021 if frame%2 == 0 else 0.038
+		held_time += frame_delta
+		main._update_fire_system(frame_delta)
+	var expected_rounds: int = 1+int(held_time/main.SHOT_INTERVAL)
+	main._fire_trigger_released()
+	var rate_pass: bool = absi(main.fps_shot_count-expected_rounds) <= 1
+	if not rate_pass: failures += 1
+	print("FIRE_AUTO_RATE_%s rounds=%d expected=%d held=%.3f" % ["PASS" if rate_pass else "FAIL",main.fps_shot_count,expected_rounds,held_time])
+	main.fps_fire_mode = 1
+
 	main._fire_trigger_released()
 	main.fps_magazine_rounds = 2
 	main.fps_shot_count = 0
