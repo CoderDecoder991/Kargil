@@ -1,0 +1,18 @@
+# Godot cache / user data
+.godot/
+Godot/app_userdata/
+*.import.tmp
+
+# Build outputs and captures (exe/pck/logs/review PNGs)
+builds/
+bbuilds/
+
+# Bundled tools
+tools/blender-5.2.0/
+tools/godot-*/
+
+# Blender backups
+*.blend1
+
+# Stray thumbnail folders with garbled names
+.thumbnails/
