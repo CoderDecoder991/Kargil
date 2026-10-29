@@ -754,8 +754,8 @@ func _build_footprint_batch() -> void:
 func _build_fps_view_rig() -> void:
 	fps_view_rig = Node3D.new()
 	fps_view_rig.name = "First-person AK-pattern rifle and winter arms"
-	fps_view_rig.position = Vector3(0.79,-0.40,-0.50)
-	fps_view_rig.rotation = Vector3(0.13,0.30,0.0)
+	fps_view_rig.position = Vector3(0.86,-0.38,-0.41)
+	fps_view_rig.rotation = Vector3(0.04,0.12,0.0)
 	fps_view_rig.scale = Vector3.ONE*1.76
 	fps_view_rig.visible = false
 	camera.add_child(fps_view_rig)
@@ -821,7 +821,7 @@ func _build_fps_view_rig() -> void:
 	cloth.roughness = 1.0
 	# Continue the authored support glove from its actual wrist to the lower-left
 	# frame edge. Ending a cylinder at the visible elbow exposed a large flat cap.
-	_view_sleeve_between(fps_view_rig,Vector3(-0.113,-0.124,-0.601),Vector3(-0.76,-0.62,0.13),0.058,0.095,cloth)
+	_view_sleeve_between(fps_view_rig,Vector3(-0.113,-0.124,-0.601),Vector3(-0.52,-0.50,0.10),0.052,0.082,cloth)
 	for part in fps_view_rig.get_children():
 		if part is MeshInstance3D: fps_aim_hidden_parts.append(part as Node3D)
 	_add_fps_uniform_patch(fps_view_rig,Vector3(-0.45,-0.40,0.075))
@@ -1819,8 +1819,8 @@ func _update_camera() -> void:
 			if fps_view_stock != null: fps_view_stock.visible = not fps_aiming
 			var view_scale := 1.65 if fps_aiming else 1.76
 			fps_view_rig.scale = Vector3.ONE * view_scale
-			var base_position := Vector3(0.0,-0.08,-0.04) if fps_aiming else Vector3(0.78,-0.40,-0.41)
-			var base_rotation := Vector3.ZERO if fps_aiming else Vector3(0.13,0.30,0.0)
+			var base_position := Vector3(0.0,-0.08,-0.04) if fps_aiming else Vector3(0.86,-0.38,-0.41)
+			var base_rotation := Vector3.ZERO if fps_aiming else Vector3(0.04,0.12,0.0)
 			var reload_blend := 0.0
 			if fps_reload_remaining > 0.0:
 				var reload_progress := 1.0-fps_reload_remaining/RELOAD_DURATION
