@@ -2223,7 +2223,7 @@ func _load_wind() -> void:
 	fire_player.volume_db = -15
 	add_child(fire_player)
 	weapon_fire_player = AudioStreamPlayer.new()
-	var report_stream := _trim_single_distant_report(load("res://assets/audio/distant_fire.wav"))
+	var report_stream := _build_single_rifle_report()
 	weapon_fire_players.clear()
 	for i in range(3):
 		var report_player := AudioStreamPlayer.new()
@@ -2234,19 +2234,30 @@ func _load_wind() -> void:
 		weapon_fire_players.append(report_player)
 	weapon_fire_player = weapon_fire_players[0]
 
-func _trim_single_distant_report(source: AudioStream) -> AudioStream:
-	if not (source is AudioStreamWAV): return source
-	var wav := source as AudioStreamWAV
-	if wav.format == AudioStreamWAV.FORMAT_IMA_ADPCM: return source
-	var bytes_per_sample := 2 if wav.format == AudioStreamWAV.FORMAT_16_BITS else 1
-	var channel_count := 2 if wav.stereo else 1
-	var frames := mini(int(wav.mix_rate*0.18),wav.data.size()/(bytes_per_sample*channel_count))
-	var trimmed := AudioStreamWAV.new()
-	trimmed.format = wav.format
-	trimmed.mix_rate = wav.mix_rate
-	trimmed.stereo = wav.stereo
-	trimmed.data = wav.data.slice(0,frames*bytes_per_sample*channel_count)
-	return trimmed
+# One-pulse placeholder report synthesized as 16-bit PCM. distant_fire.wav is a
+# two-pulse volley imported as QOA, so byte-trimming it does not yield one shot.
+func _build_single_rifle_report() -> AudioStreamWAV:
+	const RATE := 22050
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 47
+	var frames := int(RATE*0.24)
+	var data := PackedByteArray()
+	data.resize(frames*2)
+	var noise := 0.0
+	for i in frames:
+		var t := float(i)/RATE
+		noise = 0.55*noise+0.45*rng.randf_range(-1.0,1.0)
+		var crack := noise*exp(-t*38.0)
+		var thump := sin(t*95.0*TAU)*exp(-t*22.0)*0.55
+		var attack := minf(1.0,t*RATE/24.0)
+		data.encode_s16(i*2,int(clampf((crack+thump)*attack*0.9,-1.0,1.0)*32767.0))
+	var report := AudioStreamWAV.new()
+	report.format = AudioStreamWAV.FORMAT_16_BITS
+	report.mix_rate = RATE
+	report.stereo = false
+	report.loop_mode = AudioStreamWAV.LOOP_DISABLED
+	report.data = data
+	return report
 
 func _process(delta: float) -> void:
 	if benchmark != "":
